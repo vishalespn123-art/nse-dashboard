@@ -22,10 +22,67 @@ from upstox_equity_data import fetch_history_upstox, fetch_batch_upstox
 from options_data import get_expiries, get_option_chain, INDEX_INSTRUMENTS, INDEX_YF_SYMBOLS
 from options_indicators import chain_to_dataframe, sentiment_summary
 from options_signal import build_options_view
+from index_ticker import render_ticker_row
+from stock_cards import render_stock_list
 
-st.set_page_config(page_title="NSE Stock Signal Dashboard", layout="wide")
 
-st.title("📈 NSE Stock Signal Dashboard")
+def get_secret(key: str) -> str:
+    """
+    Safely read a value from Streamlit's Secrets manager
+    (Settings > Secrets on Streamlit Cloud). Returns "" if not set -
+    this way the app works whether or not secrets are configured, and
+    never crashes if secrets.toml doesn't exist locally.
+    """
+    try:
+        return st.secrets.get(key, "")
+    except Exception:
+        return ""
+
+
+st.set_page_config(
+    page_title="NSE Dashboard",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# --- App-like styling: hide Streamlit's default web chrome, add a compact top bar ---
+st.markdown("""
+    <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        div[data-testid="stToolbar"] {visibility: hidden; height: 0;}
+        div[data-testid="stDecoration"] {visibility: hidden; height: 0;}
+        div[data-testid="stStatusWidget"] {visibility: hidden;}
+        header { background: transparent; }
+        .block-container {padding-top: 0.5rem; padding-bottom: 1rem;}
+
+        .app-topbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 4px 14px 4px;
+            border-bottom: 1px solid rgba(128,128,128,0.2);
+            margin-bottom: 12px;
+        }
+        .app-topbar .app-icon { font-size: 26px; }
+        .app-topbar .app-title { font-size: 20px; font-weight: 700; margin: 0; }
+        .app-topbar .app-subtitle { font-size: 12px; opacity: 0.7; margin: 0; }
+
+        /* Bigger tap targets, less "web page" padding, for a native feel */
+        button[data-baseweb="tab"] { padding: 10px 14px; font-weight: 600; }
+        div[data-testid="stMetricValue"] { font-size: 1.4rem; }
+    </style>
+
+    <div class="app-topbar">
+        <span class="app-icon">📈</span>
+        <div>
+            <p class="app-title">NSE Dashboard</p>
+            <p class="app-subtitle">Screener · Signals · Backtest · Options</p>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
 st.caption(
     "Technical-indicator based screener for NSE stocks — for personal research only. "
     "This is **not** a price predictor. Signals reflect historical probability, not certainty. "
@@ -34,14 +91,20 @@ st.caption(
 
 with st.sidebar:
     st.header("🤖 AI Insight (optional)")
-    st.caption(
-        "Paste your Anthropic API key to get a plain-language explanation of each "
-        "signal plus a news sentiment summary on the Stock Detail tab. Your key is "
-        "kept only in this browser session - never saved to disk."
-    )
-    api_key = st.text_input("Anthropic API key", type="password", placeholder="sk-ant-...")
-    if api_key:
-        st.session_state["anthropic_api_key"] = api_key
+
+    secret_anthropic_key = get_secret("ANTHROPIC_API_KEY")
+    if secret_anthropic_key:
+        st.session_state["anthropic_api_key"] = secret_anthropic_key
+        st.success("✅ Anthropic API key loaded from Secrets")
+    else:
+        st.caption(
+            "Paste your Anthropic API key to get a plain-language explanation of each "
+            "signal plus a news sentiment summary on the Stock Detail tab. Your key is "
+            "kept only in this browser session - never saved to disk."
+        )
+        api_key = st.text_input("Anthropic API key", type="password", placeholder="sk-ant-...")
+        if api_key:
+            st.session_state["anthropic_api_key"] = api_key
 
     st.divider()
     st.header("📡 Equity data source")
@@ -65,6 +128,27 @@ tab_screener, tab_detail, tab_backtest, tab_options = st.tabs(
 # TAB 1: SCREENER
 # ---------------------------------------------------------------------------
 with tab_screener:
+    # --- Index ticker strip (Nifty 50 / Bank Nifty, with sparkline) ---
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _get_index_ticker_data():
+        idx_data = {}
+        if _using_upstox():
+            token = st.session_state["upstox_access_token"]
+            for label, yf_sym in [("NIFTY 50", "^NSEI"), ("BANK NIFTY", "^NSEBANK")]:
+                # index history isn't equity, so fall back to yfinance for the sparkline
+                df = fetch_history(yf_sym, period="1mo")
+                idx_data[label] = df
+        else:
+            for label, yf_sym in [("NIFTY 50", "^NSEI"), ("BANK NIFTY", "^NSEBANK")]:
+                idx_data[label] = fetch_history(yf_sym, period="1mo")
+        return idx_data
+
+    try:
+        index_data = _get_index_ticker_data()
+        st.markdown(render_ticker_row(index_data), unsafe_allow_html=True)
+    except Exception:
+        pass  # ticker is a nice-to-have; don't block the rest of the page if it fails
+
     st.subheader("Scan Nifty 500 stocks for signals")
 
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -114,6 +198,7 @@ with tab_screener:
                     results.append({
                         "Symbol": sym,
                         "Close (₹)": summary["close"],
+                        "Change %": summary.get("change_pct"),
                         "Signal": summary["signal"],
                         "Score": summary["score"],
                         "RSI": summary["rsi"],
@@ -143,6 +228,7 @@ with tab_screener:
                     results.append({
                         "Symbol": sym.replace(".NS", ""),
                         "Close (₹)": summary["close"],
+                        "Change %": summary.get("change_pct"),
                         "Signal": summary["signal"],
                         "Score": summary["score"],
                         "RSI": summary["rsi"],
@@ -180,24 +266,7 @@ with tab_screener:
                     st.write(", ".join(s.replace(".NS", "") for s in failed_symbols))
                     st.caption("Try re-running the scan in a minute — Yahoo's limits reset over time, and results are cached for 15 minutes.")
 
-            def color_signal(val):
-                if "Buy" in val:
-                    return "color: #16a34a; font-weight: 600"
-                elif "Sell" in val:
-                    return "color: #dc2626; font-weight: 600"
-                return ""
-
-            try:
-                styled = df_results.style.map(color_signal, subset=["Signal"])
-            except AttributeError:
-                # older pandas versions (<2.1) use applymap instead of map
-                styled = df_results.style.applymap(color_signal, subset=["Signal"])
-
-            st.dataframe(
-                styled,
-                use_container_width=True,
-                height=600,
-            )
+            st.markdown(render_stock_list(df_results.to_dict("records")), unsafe_allow_html=True)
 
             st.caption(
                 "Score ranges from -5 (strong bearish) to +5 (strong bullish), combining trend, "
@@ -397,26 +466,37 @@ with tab_options:
 
     if "upstox_access_token" not in st.session_state:
         st.markdown("#### Step 1: Connect your Upstox account")
-        st.caption(
-            "Options data needs a broker API — Upstox has a free developer tier. "
-            "[Register an app here](https://developer.upstox.com) to get an API Key + API Secret "
-            "(set any redirect URI you control, e.g. `https://127.0.0.1:5000/callback` — it doesn't "
-            "need to be a live server, you'll just copy the code from the browser's address bar)."
-        )
 
-        colx, coly = st.columns(2)
-        with colx:
-            up_api_key = st.text_input("Upstox API Key", key="up_api_key")
-            up_api_secret = st.text_input("Upstox API Secret", type="password", key="up_api_secret")
-        with coly:
-            up_redirect_uri = st.text_input("Redirect URI (must match your app registration)", key="up_redirect_uri")
+        secret_up_key = get_secret("UPSTOX_API_KEY")
+        secret_up_secret = get_secret("UPSTOX_API_SECRET")
+        secret_up_redirect = get_secret("UPSTOX_REDIRECT_URI")
+        creds_from_secrets = bool(secret_up_key and secret_up_secret and secret_up_redirect)
+
+        if creds_from_secrets:
+            st.success("✅ Upstox API Key/Secret/Redirect URI loaded from Secrets — just log in and paste the code below.")
+            up_api_key, up_api_secret, up_redirect_uri = secret_up_key, secret_up_secret, secret_up_redirect
+        else:
+            st.caption(
+                "Options data needs a broker API — Upstox has a free developer tier. "
+                "[Register an app here](https://developer.upstox.com) to get an API Key + API Secret "
+                "(set any redirect URI you control, e.g. `https://127.0.0.1:5000/callback` — it doesn't "
+                "need to be a live server, you'll just copy the code from the browser's address bar)."
+            )
+            colx, coly = st.columns(2)
+            with colx:
+                up_api_key = st.text_input("Upstox API Key", key="up_api_key")
+                up_api_secret = st.text_input("Upstox API Secret", type="password", key="up_api_secret")
+            with coly:
+                up_redirect_uri = st.text_input("Redirect URI (must match your app registration)", key="up_redirect_uri")
 
         if up_api_key and up_redirect_uri:
             login_url = build_login_url(up_api_key, up_redirect_uri)
             st.markdown(f"[**Click here to log in to Upstox →**]({login_url})")
             st.caption(
                 "After logging in, your browser will redirect to your redirect URI with `?code=...` "
-                "in the address bar. Copy just that code value and paste it below."
+                "in the address bar. Copy just that code value and paste it below. "
+                "(This daily login is required by Upstox itself — access tokens expire every night, "
+                "so even with saved keys, this one step can't be skipped.)"
             )
 
         auth_code = st.text_input("Paste the authorization code here", key="up_auth_code")
