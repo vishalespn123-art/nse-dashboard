@@ -24,6 +24,8 @@ from options_indicators import chain_to_dataframe, sentiment_summary
 from options_signal import build_options_view
 from index_ticker import render_ticker_row
 from stock_cards import render_stock_list
+from ipo_data import fetch_ipos
+from ipo_cards import render_ipo_list
 
 
 def get_secret(key: str) -> str:
@@ -120,8 +122,8 @@ with st.sidebar:
 def _using_upstox() -> bool:
     return "upstox_access_token" in st.session_state
 
-tab_screener, tab_detail, tab_backtest, tab_options = st.tabs(
-    ["🔍 Screener", "📊 Stock Detail", "🧪 Backtest", "🎯 Options (CE/PE)"]
+tab_screener, tab_detail, tab_backtest, tab_options, tab_ipo = st.tabs(
+    ["🔍 Screener", "📊 Stock Detail", "🧪 Backtest", "🎯 Options (CE/PE)", "🆕 IPO"]
 )
 
 # ---------------------------------------------------------------------------
@@ -593,3 +595,74 @@ with tab_options:
                 )
             else:
                 st.warning("No option chain data returned for this expiry.")
+
+_SAMPLE_IPOS = [
+    {
+        "name": "Sample Tech Solutions (DEMO DATA)", "type": "Mainboard", "status": "Open",
+        "open_date": "2026-08-11", "close_date": "2026-08-14", "listing_date": "2026-08-19",
+        "price_band": "410-432", "lot_size": "34", "issue_size": "₹950 Cr",
+        "gmp": {"price": "85", "percentage": "19.7", "updated_at": "Demo data"},
+        "subscription": {"total": "12.4"},
+    },
+    {
+        "name": "Sample Pharma Ltd (DEMO DATA)", "type": "Mainboard", "status": "Upcoming",
+        "open_date": "2026-08-18", "close_date": "2026-08-20", "listing_date": "2026-08-25",
+        "price_band": "210-225", "lot_size": "65", "issue_size": "₹620 Cr",
+        "gmp": {"price": "30", "percentage": "13.3", "updated_at": "Demo data"},
+        "subscription": {"total": None},
+    },
+    {
+        "name": "Sample Logistics Co (DEMO DATA)", "type": "SME", "status": "Closed",
+        "open_date": "2026-08-05", "close_date": "2026-08-07", "listing_date": "2026-08-12",
+        "price_band": "88-92", "lot_size": "1600", "issue_size": "₹42 Cr",
+        "gmp": {"price": "-4", "percentage": "-4.3", "updated_at": "Demo data"},
+        "subscription": {"total": "3.1"},
+    },
+]
+
+# ---------------------------------------------------------------------------
+# TAB 5: IPO TRACKER
+# ---------------------------------------------------------------------------
+with tab_ipo:
+    st.subheader("IPO Tracker")
+    st.warning(
+        "⚠️ **GMP (Grey Market Premium) is unofficial, unregulated data** from the informal grey "
+        "market — it's not published or endorsed by SEBI, NSE, or BSE. Treat it as a sentiment "
+        "indicator only, never as a guaranteed listing price. Open/close/listing dates are the "
+        "factual part; GMP can (and does) change significantly right up to listing day."
+    )
+
+    ipo_api_key = get_secret("IPO_GURU_API_KEY")
+
+    colf1, colf2 = st.columns(2)
+    with colf1:
+        status_filter = st.selectbox("Status", ["All", "Open", "Upcoming", "Closed"], key="ipo_status")
+    with colf2:
+        type_filter = st.selectbox("Type", ["All", "Mainboard", "SME"], key="ipo_type")
+
+    status_param = None if status_filter == "All" else status_filter.lower()
+    type_param = None if type_filter == "All" else type_filter.lower()
+
+    using_sample = False
+    if ipo_api_key:
+        ipos = fetch_ipos(ipo_api_key, status=status_param, ipo_type=type_param)
+        if not ipos:
+            st.info("No live IPO data returned right now — showing sample data below so the layout is visible.")
+            ipos = _SAMPLE_IPOS
+            using_sample = True
+    else:
+        st.info(
+            "Live IPO/GMP data needs a free API key (see README for how to get one — it's issued "
+            "manually so it can take a bit). Showing **sample data** below so you can see the layout."
+        )
+        ipos = _SAMPLE_IPOS
+        using_sample = True
+
+    # apply filters to sample data too, so the UI behaves consistently either way
+    if using_sample:
+        if status_param:
+            ipos = [i for i in ipos if i["status"].lower() == status_param]
+        if type_param:
+            ipos = [i for i in ipos if i["type"].lower() == type_param]
+
+    st.markdown(render_ipo_list(ipos), unsafe_allow_html=True)

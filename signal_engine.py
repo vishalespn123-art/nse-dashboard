@@ -83,12 +83,21 @@ def analyze_stock(df: pd.DataFrame) -> dict:
 
     df_ind = add_all_indicators(df)
     latest = df_ind.iloc[-1]
+    prev_close = df_ind.iloc[-2]["Close"] if len(df_ind) >= 2 else None
 
     score = score_row(latest)
     label = label_for_score(score)
 
+    change_abs = None
+    change_pct = None
+    if prev_close and prev_close != 0:
+        change_abs = round(float(latest["Close"] - prev_close), 2)
+        change_pct = round(float((latest["Close"] - prev_close) / prev_close * 100), 2)
+
     return {
         "close": round(float(latest["Close"]), 2),
+        "change_abs": change_abs,
+        "change_pct": change_pct,
         "score": score,
         "signal": label,
         "rsi": round(float(latest["RSI14"]), 1) if pd.notna(latest["RSI14"]) else None,
