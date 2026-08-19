@@ -10,7 +10,11 @@ def _status_color(status: str) -> str:
         return "#16a34a"
     elif s == "upcoming":
         return "#2563eb"
-    return "#6b7280"  # closed / listed
+    elif s == "announced":
+        return "#9333ea"
+    elif s == "listed":
+        return "#0891b2"
+    return "#6b7280"  # closed
 
 
 def _gmp_color(gmp_price) -> str:
@@ -25,6 +29,31 @@ def _gmp_color(gmp_price) -> str:
     return "#6b7280"
 
 
+def _extract_gmp_display(gmp) -> tuple:
+    """
+    Handles a few possible GMP shapes defensively, since GMP comes from a
+    manually-approved third-party source whose exact field names we can't
+    fully verify without a live key. Returns (display_string, color).
+    """
+    if not gmp:
+        return "—", "#6b7280"
+
+    price = None
+    pct = None
+    if isinstance(gmp, dict):
+        price = gmp.get("price") or gmp.get("gmpPrice")
+        pct = gmp.get("percentage") or gmp.get("pct")
+        if price is None and "aggregations" in gmp:
+            price = gmp["aggregations"].get("median") or gmp["aggregations"].get("mean")
+
+    if price in (None, "0", 0):
+        return "—", "#6b7280"
+
+    color = _gmp_color(price)
+    display = f"₹{price}" + (f" ({pct}%)" if pct not in (None, "") else "")
+    return display, color
+
+
 def render_ipo_card(ipo: dict) -> str:
     name = ipo.get("name", "—")
     ipo_type = ipo.get("type", "")
@@ -34,20 +63,21 @@ def render_ipo_card(ipo: dict) -> str:
     open_date = ipo.get("open_date") or "—"
     close_date = ipo.get("close_date") or "—"
     listing_date = ipo.get("listing_date") or "—"
-    price_band = ipo.get("price_band") or ipo.get("issue_price") or "—"
+    price_band = ipo.get("price_band") or "—"
     lot_size = ipo.get("lot_size") or "—"
     issue_size = ipo.get("issue_size") or "—"
+    listing_gain = ipo.get("listing_gain")
 
-    gmp = ipo.get("gmp") or {}
-    gmp_price = gmp.get("price")
-    gmp_pct = gmp.get("percentage")
-    gmp_updated = gmp.get("updated_at")
-    gmp_color = _gmp_color(gmp_price)
-    gmp_display = f"₹{gmp_price} ({gmp_pct}%)" if gmp_price not in (None, "0", 0) else "—"
+    gmp_display, gmp_color = _extract_gmp_display(ipo.get("gmp"))
 
-    sub = ipo.get("subscription") or {}
-    sub_total = sub.get("total")
-    sub_display = f"{sub_total}x subscribed" if sub_total else ""
+    extra_line = ""
+    if listing_gain not in (None, ""):
+        try:
+            lg = float(listing_gain)
+            lg_color = "#16a34a" if lg >= 0 else "#dc2626"
+            extra_line = f"<div class='ipo-listing-gain' style='color:{lg_color};'>Listed at {lg:+.1f}% gain</div>"
+        except (TypeError, ValueError):
+            pass
 
     return f"""
     <div class="ipo-card">
@@ -68,8 +98,8 @@ def render_ipo_card(ipo: dict) -> str:
                 GMP: <b>{gmp_display}</b>
                 <span class="ipo-gmp-tag">unofficial</span>
             </div>
-            <div class="ipo-sub">{sub_display}</div>
         </div>
+        {extra_line}
     </div>
     """
 
@@ -91,7 +121,7 @@ def render_ipo_list(ipos: list) -> str:
         .ipo-meta {{ font-size: 11px; opacity: 0.65; margin-top: 2px; }}
         .ipo-status {{
             font-size: 11px; font-weight: 700; padding: 3px 10px;
-            border-radius: 999px; white-space: nowrap;
+            border-radius: 999px; white-space: nowrap; text-transform: capitalize;
         }}
         .ipo-dates {{
             display: flex; gap: 16px; font-size: 12px; opacity: 0.8;
@@ -106,7 +136,7 @@ def render_ipo_list(ipos: list) -> str:
             font-size: 9px; opacity: 0.6; border: 1px solid currentColor;
             border-radius: 4px; padding: 1px 5px; margin-left: 6px;
         }}
-        .ipo-sub {{ font-size: 12px; opacity: 0.7; }}
+        .ipo-listing-gain {{ font-size: 12px; font-weight: 600; margin-top: 6px; }}
     </style>
     {cards_html}
     """

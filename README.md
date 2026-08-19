@@ -149,6 +149,22 @@ platform. Rough plan, in priority order:
 Each phase is a substantial chunk of work on its own — ask for a specific
 one and it can be built out fully rather than all at once.
 
+### 🆕 IPO tab — two optional free API keys
+
+1. **Core IPO details (dates, price band, issue size) — instant, free:**
+   Go to [ipoalerts.in](https://ipoalerts.in), sign up, go to **API Keys**
+   in the dashboard, and create a key. Takes about 2 minutes, no approval
+   wait. Add it to Secrets as `IPOALERTS_API_KEY`.
+2. **GMP (Grey Market Premium) — free, but manually issued:**
+   Email `ipoguru.in [at] gmail.com` requesting API access (see
+   [ipoguru.in](https://www.ipoguru.in/ipo-gmp-details-developer-api)).
+   This can take a while since a person reviews each request. Add it to
+   Secrets as `IPO_GURU_API_KEY` once you get it.
+
+The IPO tab works fine with just the first key — GMP simply won't show on
+the cards until the second key is added. Without either key, it falls back
+to labeled sample data so the layout is still visible.
+
 ## Known limitations
 
 - Free Yahoo Finance data occasionally has gaps or delays for NSE stocks.

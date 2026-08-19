@@ -632,28 +632,36 @@ with tab_ipo:
         "factual part; GMP can (and does) change significantly right up to listing day."
     )
 
-    ipo_api_key = get_secret("IPO_GURU_API_KEY")
+    ipoalerts_key = get_secret("IPOALERTS_API_KEY")
+    ipoguru_key = get_secret("IPO_GURU_API_KEY")  # optional - adds GMP on top
 
     colf1, colf2 = st.columns(2)
     with colf1:
-        status_filter = st.selectbox("Status", ["All", "Open", "Upcoming", "Closed"], key="ipo_status")
+        status_filter = st.selectbox(
+            "Status", ["All", "Open", "Upcoming", "Closed", "Listed", "Announced"], key="ipo_status"
+        )
     with colf2:
         type_filter = st.selectbox("Type", ["All", "Mainboard", "SME"], key="ipo_type")
 
     status_param = None if status_filter == "All" else status_filter.lower()
-    type_param = None if type_filter == "All" else type_filter.lower()
+    type_param_api = None if type_filter == "All" else ("EQ" if type_filter == "Mainboard" else "SME")
 
     using_sample = False
-    if ipo_api_key:
-        ipos = fetch_ipos(ipo_api_key, status=status_param, ipo_type=type_param)
+    if ipoalerts_key:
+        ipos = fetch_ipos(ipoalerts_key, ipoguru_key=ipoguru_key, status=status_param, ipo_type=type_param_api)
         if not ipos:
             st.info("No live IPO data returned right now — showing sample data below so the layout is visible.")
             ipos = _SAMPLE_IPOS
             using_sample = True
+        elif not ipoguru_key:
+            st.caption(
+                "ℹ️ Showing live IPO dates/details from ipoalerts.in. Add an IPO_GURU_API_KEY in Secrets "
+                "too if you also want GMP figures on each card (free, but issued manually - see README)."
+            )
     else:
         st.info(
-            "Live IPO/GMP data needs a free API key (see README for how to get one — it's issued "
-            "manually so it can take a bit). Showing **sample data** below so you can see the layout."
+            "Live IPO data needs a free, instant API key from ipoalerts.in (see README for the 2-minute "
+            "signup). Showing **sample data** below so you can see the layout."
         )
         ipos = _SAMPLE_IPOS
         using_sample = True
@@ -662,7 +670,7 @@ with tab_ipo:
     if using_sample:
         if status_param:
             ipos = [i for i in ipos if i["status"].lower() == status_param]
-        if type_param:
-            ipos = [i for i in ipos if i["type"].lower() == type_param]
+        if type_filter != "All":
+            ipos = [i for i in ipos if i["type"] == type_filter]
 
     st.markdown(render_ipo_list(ipos), unsafe_allow_html=True)
